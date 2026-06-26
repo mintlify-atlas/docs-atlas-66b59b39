@@ -1,7 +1,7 @@
 ---
-title: "Messages in Broccoli: BrokerMessage and Payloads"
+title: "Message Envelopes: BrokerMessage<T> Fields and Lifecycle"
 sidebarTitle: "Messages"
-description: "Broccoli wraps every payload in a BrokerMessage<T> envelope with a unique task_id, attempt counter, and optional disambiguator for fairness routing."
+description: "Broccoli wraps every payload in BrokerMessage<T> with a unique task_id, attempt counter, and optional disambiguator key for fairness queue routing."
 ---
 
 Every piece of data that flows through a Broccoli queue is wrapped in a `BrokerMessage<T>` envelope. This envelope carries your user-defined payload alongside Broccoli-managed metadata: a unique identifier, a retry counter, and an optional fairness routing key. Understanding this type is essential for writing handlers and reasoning about message lifecycle.

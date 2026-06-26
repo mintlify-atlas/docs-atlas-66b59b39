@@ -1,7 +1,7 @@
 ---
-title: "PublishOptions and PublishOptionsBuilder API"
+title: "PublishOptions: TTL, Priority, and Scheduling Fields"
 sidebarTitle: "PublishOptions"
-description: "Reference for PublishOptions — configure TTL, message priority, delayed delivery, and scheduled time when publishing messages to a Broccoli queue."
+description: "PublishOptions fields: ttl, priority (1–5), delay, and scheduled_at for Broccoli publish and publish_batch. Build with PublishOptions::builder()."
 ---
 
 `PublishOptions` is an optional struct passed to `publish` and `publish_batch` to customize how a message is delivered. All fields are optional — omit any field to use the broker default. Build instances using the `PublishOptionsBuilder` returned by `PublishOptions::builder()`.

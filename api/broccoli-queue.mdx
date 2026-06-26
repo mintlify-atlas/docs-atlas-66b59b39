@@ -1,7 +1,7 @@
 ---
-title: "BroccoliQueue API Reference"
+title: "BroccoliQueue: Methods, Builder, and Worker Reference"
 sidebarTitle: "BroccoliQueue"
-description: "Complete API reference for BroccoliQueue — the primary struct in Broccoli for publishing, consuming, acknowledging, and processing messages from any broker backend."
+description: "Complete reference for BroccoliQueue — publish, consume, acknowledge, reject, process_messages, and queue_status for Redis, RabbitMQ, and SurrealDB."
 ---
 
 `BroccoliQueue` is the main entry point into Broccoli. It wraps the underlying broker implementation behind a single unified async interface and is constructed via the `BroccoliQueueBuilder` builder pattern. All methods are async and return `Result<_, BroccoliError>`.

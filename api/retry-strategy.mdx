@@ -1,7 +1,7 @@
 ---
-title: "RetryStrategy API Reference"
+title: "RetryStrategy: Configure Message Retry Behavior in Broccoli"
 sidebarTitle: "RetryStrategy"
-description: "Reference for RetryStrategy — configure the number of retry attempts and enable or disable retry behavior for failed messages in Broccoli."
+description: "Reference for RetryStrategy — set attempts, enable or disable retries, and apply the strategy to BroccoliQueueBuilder for failed message handling."
 ---
 
 `RetryStrategy` controls what happens when a message handler returns an error. It is configured once on the `BroccoliQueueBuilder` and applies to all messages processed by that queue. All builder methods are `const fn` and can be used in constant contexts.

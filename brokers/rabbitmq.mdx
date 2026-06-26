@@ -1,7 +1,7 @@
 ---
-title: "RabbitMQ Broker Backend for Broccoli Queue"
+title: "RabbitMQ Backend: Setup, AMQP URLs, and Scheduling"
 sidebarTitle: "RabbitMQ"
-description: "Use RabbitMQ as the Broccoli message broker backend. Enable with the rabbitmq feature flag; powered by the lapin async AMQP client and deadpool-lapin."
+description: "Configure RabbitMQ as the Broccoli broker using the rabbitmq feature flag. Uses lapin and deadpool-lapin. Scheduling requires the delayed-exchange plugin."
 ---
 
 The RabbitMQ backend uses `lapin`, a fully async AMQP client for Rust, combined with `deadpool-lapin` for connection pooling. It is suitable for production deployments where RabbitMQ is already part of the infrastructure or where advanced AMQP routing features are needed.

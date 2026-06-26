@@ -1,7 +1,7 @@
 ---
-title: "Publishing Messages to a Broccoli Queue"
+title: "Publishing Messages: Single, Batch, Priority, and Options"
 sidebarTitle: "Publishing"
-description: "Publish single and batched messages to Broccoli queues with options for priority, TTL, delayed delivery, and scheduled time."
+description: "Use Broccoli publish and publish_batch to send messages. Configure priority, TTL, delay, and scheduled_at via PublishOptions. Returns BrokerMessage<T>."
 ---
 
 Publishing a message in Broccoli means serializing your Rust struct and writing it to the broker. The `publish` and `publish_batch` methods on `BroccoliQueue` handle serialization, broker-specific wire formats, and return the stored `BrokerMessage<T>` so you can capture the assigned `task_id`.

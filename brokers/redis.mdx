@@ -1,7 +1,7 @@
 ---
-title: "Redis Broker Backend for Broccoli Queue"
+title: "Redis Backend: bb8 Pooling, Queue Structure, and Setup"
 sidebarTitle: "Redis"
-description: "Configure and use Redis as the Broccoli message broker backend. Redis is the default backend backed by a bb8-redis connection pool with sorted set queues."
+description: "Redis is the default Broccoli broker. Uses bb8-redis pooling and sorted set queues for priority ordering. Supports fairness queues and the management API."
 ---
 
 Redis is the default and most feature-complete Broccoli backend. It uses a `bb8-redis` connection pool for high-throughput async I/O, stores messages in Redis sorted sets for priority ordering, and supports the full Broccoli feature set including fairness queues, message scheduling, and the management API.

@@ -1,7 +1,7 @@
 ---
-title: "BroccoliError: Error Types Reference"
+title: "BroccoliError Variants: Causes and Handling Patterns"
 sidebarTitle: "Errors"
-description: "Reference for BroccoliError — all error variants that Broccoli queue operations can return, with descriptions of when each occurs and how to handle them."
+description: "All BroccoliError variants from Broker and Publish to ConnectionTimeout and NotImplemented, with display strings, causes, and Rust match handling examples."
 ---
 
 All Broccoli operations return `Result<_, BroccoliError>`. The `BroccoliError` enum covers every failure mode from broker connectivity to message serialization. It implements `std::error::Error` via `thiserror` and derives `Debug`.

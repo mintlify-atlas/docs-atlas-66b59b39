@@ -1,7 +1,7 @@
 ---
-title: "Broker Backends: Redis, RabbitMQ, and SurrealDB"
+title: "Broker Backends: Choosing Between Redis, RabbitMQ, SurrealDB"
 sidebarTitle: "Brokers"
-description: "Broccoli supports three message broker backends — Redis (default), RabbitMQ, and SurrealDB — each enabled via Cargo feature flags and selected automatically by URL scheme."
+description: "Broccoli selects the broker backend automatically from the URL scheme. Redis is default; RabbitMQ and SurrealDB are enabled via Cargo feature flags."
 ---
 
 Broccoli abstracts message broker interactions behind a `Broker` trait, so your application code never calls broker-specific APIs directly. Instead, you pass a URL to `BroccoliQueue::builder()`, and Broccoli selects and initializes the correct backend automatically based on the URL scheme. Switching backends requires only a URL change and a feature flag update — no application code changes.

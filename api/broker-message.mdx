@@ -1,7 +1,7 @@
 ---
-title: "BrokerMessage<T> Type Reference"
+title: "BrokerMessage<T>: Envelope Fields and Handler Usage"
 sidebarTitle: "BrokerMessage"
-description: "Reference for BrokerMessage<T> — the typed message envelope carrying task_id, payload, retry attempts, and optional disambiguator returned by Broccoli queue operations."
+description: "BrokerMessage<T> carries task_id, payload, attempts, and disambiguator. Returned by publish and consume; received as argument in process_messages handlers."
 ---
 
 `BrokerMessage<T>` is the message envelope returned by `publish`, `consume`, and `try_consume`. It carries your application payload alongside Broccoli-managed metadata including a unique identifier, retry counter, and optional fairness routing key. This is also the type received as the argument in `process_messages` handler closures.

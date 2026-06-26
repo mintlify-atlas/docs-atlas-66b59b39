@@ -1,7 +1,7 @@
 ---
-title: "Consuming and Processing Messages from Broccoli"
+title: "Consuming Messages: Manual and Concurrent Worker Patterns"
 sidebarTitle: "Consuming"
-description: "Consume messages manually or use process_messages for concurrent worker loops with automatic acknowledgment and rejection on error."
+description: "Consume in Broccoli using consume, try_consume, or process_messages. Covers ack/reject, batch consume, concurrent workers, and ConsumeOptions settings."
 ---
 
 Broccoli provides two consumption patterns: manual consume-acknowledge loops for fine-grained control, and `process_messages` / `process_messages_with_handlers` for production worker loops that handle concurrency, acknowledgment, and error routing automatically.

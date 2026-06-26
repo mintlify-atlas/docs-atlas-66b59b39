@@ -1,7 +1,7 @@
 ---
-title: "Queue Management and Introspection in Broccoli"
+title: "Queue Introspection: size() and queue_status() in Broccoli"
 sidebarTitle: "Management"
-description: "Use the management feature flag to inspect queue status, message counts, and processing state for monitoring, alerting, and operational visibility."
+description: "Monitor Broccoli queues with size() (no feature needed) or queue_status() (management feature) to get pending, processing, and failed message counts."
 ---
 
 Broccoli provides two levels of queue introspection: the `size()` method available without any feature flags, and the richer `queue_status()` method unlocked by the `management` Cargo feature. Both are useful for building monitoring dashboards, health check endpoints, and alerting integrations.

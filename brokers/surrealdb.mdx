@@ -1,7 +1,7 @@
 ---
-title: "SurrealDB Broker Backend for Broccoli Queue"
+title: "SurrealDB Backend: Remote and In-Memory Queue Setup"
 sidebarTitle: "SurrealDB"
-description: "Use SurrealDB as the Broccoli message broker for embedded or remote deployments. Supports in-memory mode for zero-dependency testing."
+description: "Use SurrealDB as the Broccoli broker with remote ws:// or in-memory mem:// mode. Supports reusing an existing connection. Management API not supported."
 ---
 
 The SurrealDB backend enables Broccoli to use SurrealDB as its message store, either connected to a remote SurrealDB server or running entirely in-process with the `mem://` driver. The in-memory mode is particularly useful for unit and integration tests that need a real queue without an external service dependency.

@@ -1,7 +1,7 @@
 ---
-title: "Retry Strategies for Failed Messages in Broccoli"
+title: "Retry Strategies: Attempt Limits and Failed Queue Behavior"
 sidebarTitle: "Retry Strategy"
-description: "Configure how Broccoli handles failed messages — set retry attempt limits, disable retries entirely, and understand the failed queue behavior."
+description: "Configure retry behavior in Broccoli — set attempt limits, disable retries, and understand how exhausted messages move to the failed queue automatically."
 ---
 
 In any distributed system, message processing can fail transiently — network timeouts, downstream service errors, or application bugs. Broccoli's retry strategy configuration lets you decide whether failed messages should be retried, how many times, and what happens when the limit is exhausted. This is configured once at the queue level via the builder and applies to all messages on that queue.

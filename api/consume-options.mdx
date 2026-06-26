@@ -1,7 +1,7 @@
 ---
-title: "ConsumeOptions and ConsumeOptionsBuilder API"
+title: "ConsumeOptions: Ack, Fairness, and Wait Configuration"
 sidebarTitle: "ConsumeOptions"
-description: "Reference for ConsumeOptions — control auto-acknowledgment, fairness routing, loop wait duration, and post-handler acknowledgment behavior in Broccoli consumers."
+description: "Reference for ConsumeOptions — set auto_ack, fairness routing, consume_wait sleep, and handler_ack for Broccoli consume and process_messages operations."
 ---
 
 `ConsumeOptions` is an optional configuration struct passed to consume methods and `process_messages`. It controls how messages are acknowledged, whether fairness routing is active, and how the consumer loop yields to the Tokio runtime. Build instances using `ConsumeOptions::builder()`.
