@@ -1,0 +1,93 @@
+---
+title: "ConsumeOptions and ConsumeOptionsBuilder API"
+sidebarTitle: "ConsumeOptions"
+description: "Reference for ConsumeOptions — control auto-acknowledgment, fairness routing, loop wait duration, and post-handler acknowledgment behavior in Broccoli consumers."
+---
+
+`ConsumeOptions` is an optional configuration struct passed to consume methods and `process_messages`. It controls how messages are acknowledged, whether fairness routing is active, and how the consumer loop yields to the Tokio runtime. Build instances using `ConsumeOptions::builder()`.
+
+```rust
+use broccoli_queue::queue::{ConsumeOptions, ConsumeOptionsBuilder};
+```
+
+## Default Values
+
+```rust
+// Defaults when None is passed as options
+ConsumeOptions {
+    auto_ack: Some(false),
+    fairness: None,          // false
+    consume_wait: None,      // zero duration
+    handler_ack: Some(true),
+}
+```
+
+## Builder Pattern
+
+```rust
+let options = ConsumeOptions::builder()
+    .fairness(true)
+    .consume_wait(std::time::Duration::from_millis(10))
+    .build();
+
+queue.process_messages("jobs", Some(4), Some(options), handler).await?;
+```
+
+## Fields
+
+<ParamField path="auto_ack" type="Option<bool>">
+  When `true`, messages are automatically acknowledged the moment they are consumed. Calling `acknowledge` or `reject` on an auto-acknowledged message returns a `BroccoliError`. Default: `false`.
+</ParamField>
+
+<ParamField path="fairness" type="Option<bool>">
+  When `true`, the consumer reads from per-disambiguator fairness sub-queues in round-robin order. Only supported by the Redis backend. Default: `None` (disabled).
+</ParamField>
+
+<ParamField path="consume_wait" type="Option<std::time::Duration>">
+  A sleep duration inserted at the top of tight consumer loops. A non-zero value creates an `await` point that allows Tokio to abort the spawned consumer task via `JoinHandle::abort()`. Default: zero (no sleep).
+</ParamField>
+
+<ParamField path="handler_ack" type="Option<bool>">
+  When `true` (the default), `process_messages` and `process_messages_with_handlers` automatically call `acknowledge` after a successful handler invocation. Set to `false` to delegate acknowledgment to another actor or long-running task. Note: a handler returning `Err` always triggers `reject` regardless of this setting. Default: `true`.
+</ParamField>
+
+## Builder Methods
+
+### `.auto_ack(auto_ack: bool) -> Self`
+
+```rust
+let opts = ConsumeOptions::builder().auto_ack(true).build();
+```
+
+### `.fairness(fairness: bool) -> Self`
+
+```rust
+let opts = ConsumeOptions::builder().fairness(true).build();
+```
+
+### `.consume_wait(consume_wait: std::time::Duration) -> Self`
+
+```rust
+let opts = ConsumeOptions::builder()
+    .consume_wait(std::time::Duration::from_millis(10))
+    .build();
+```
+
+### `.handler_ack(handler_ack: bool) -> Self`
+
+```rust
+// Delegate acknowledgment to a separate reaper process
+let opts = ConsumeOptions::builder().handler_ack(false).build();
+```
+
+### `.build() -> ConsumeOptions`
+
+Constructs the `ConsumeOptions` from the builder state.
+
+<Warning>
+  If `auto_ack` is `true`, do not call `acknowledge` or `reject` on the returned message — doing so will return a `BroccoliError`. Use `auto_ack: true` only when you do not need to handle acknowledgment yourself.
+</Warning>
+
+<Tip>
+  Set `consume_wait` to a non-zero value (e.g., `Duration::from_millis(10)`) when spawning `process_messages` inside a `tokio::spawn` task that you may want to cancel with `abort()`. Without a `tokio::time::sleep` await point in the loop, Tokio cannot interrupt the running task.
+</Tip>

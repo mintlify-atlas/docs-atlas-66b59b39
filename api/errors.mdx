@@ -1,0 +1,90 @@
+---
+title: "BroccoliError: Error Types Reference"
+sidebarTitle: "Errors"
+description: "Reference for BroccoliError — all error variants that Broccoli queue operations can return, with descriptions of when each occurs and how to handle them."
+---
+
+All Broccoli operations return `Result<_, BroccoliError>`. The `BroccoliError` enum covers every failure mode from broker connectivity to message serialization. It implements `std::error::Error` via `thiserror` and derives `Debug`.
+
+```rust
+use broccoli_queue::error::BroccoliError;
+```
+
+## Error Variants
+
+| Variant | Display format | When it occurs |
+|---|---|---|
+| `Broker(String)` | `"Broker error: {0}"` | Connection failures, pool initialization errors |
+| `BrokerNonIdempotentOp(String)` | `"Broker error: non-idempotent operation {0}"` | Concurrent reads on the same SurrealDB topic |
+| `BrokerNonIdempotentRetriableOp(String)` | `"Broker error: non-idempotent retriable operation {0}"` | Concurrent writes on the same SurrealDB table (safe to retry) |
+| `Publish(String)` | `"Failed to publish message: {0}"` | Message send failures, serialization errors on publish |
+| `Consume(String)` | `"Failed to consume message: {0}"` | Message retrieval failures, deserialization errors on consume |
+| `Acknowledge(String)` | `"Failed to acknowledge message: {0}"` | Failed to remove from processing queue |
+| `Reject(String)` | `"Failed to reject message: {0}"` | Failed to re-queue or move to failed queue |
+| `Cancel(String)` | `"Failed to cancel message: {0}"` | Failed to delete message by ID |
+| `GetMessagePosition(String)` | `"Failed to get message position: {0}"` | Position lookup failures |
+| `Serialization(serde_json::Error)` | `"Serialization error: {0}"` | JSON serialization or deserialization failures |
+| `Redis(redis::RedisError)` | `"Redis error: {0}"` | Redis protocol or I/O errors *(redis feature only)* |
+| `SurrealDB(surrealdb::Error)` | `"SurrealDB error: {0}"` | SurrealDB errors *(surrealdb feature only)* |
+| `Job(String)` | `"Job error: {0}"` | Job processing errors |
+| `QueueStatus(String)` | `"Queue status error: {0}"` | Failed to retrieve queue status via management API |
+| `ConnectionTimeout(u32)` | `"Connection timeout after {0} retries"` | Timed out connecting to the broker; contains retry count |
+| `NotImplemented` | `"Feature not implemented"` | Feature not available for this backend (e.g., message position for RabbitMQ) |
+
+## Handling Errors
+
+Match on specific variants to apply targeted error handling:
+
+```rust
+use broccoli_queue::error::BroccoliError;
+
+match queue.consume::<MyPayload>("jobs", None).await {
+    Ok(msg) => {
+        // process msg
+    }
+    Err(BroccoliError::Consume(e)) => {
+        eprintln!("Consume failed: {}", e);
+    }
+    Err(BroccoliError::ConnectionTimeout(retries)) => {
+        eprintln!("Timed out after {} retries — is the broker running?", retries);
+    }
+    Err(BroccoliError::Serialization(e)) => {
+        eprintln!("Deserialization error — check your payload type: {}", e);
+    }
+    Err(e) => {
+        eprintln!("Unexpected error: {}", e);
+    }
+}
+```
+
+## Feature-Gated Variants
+
+The `Redis` and `SurrealDB` variants are only present when their respective Cargo features are enabled:
+
+- `BroccoliError::Redis` — only available with the `redis` feature
+- `BroccoliError::SurrealDB` — only available with the `surrealdb` feature
+
+When writing exhaustive `match` expressions that need to compile across multiple feature configurations, use a catch-all `Err(e)` arm.
+
+## In Handler Functions
+
+When using `process_messages`, return `Err(BroccoliError::Job(...))` from your handler to signal processing failure and trigger the retry/reject flow:
+
+```rust
+use broccoli_queue::{brokers::broker::BrokerMessage, error::BroccoliError};
+
+queue.process_messages(
+    "jobs",
+    Some(4),
+    None,
+    |msg: BrokerMessage<MyPayload>| async move {
+        do_work(&msg.payload).await.map_err(|e| {
+            BroccoliError::Job(format!("Work failed for {}: {}", msg.task_id, e))
+        })
+    },
+).await?;
+```
+
+<Note>
+  `BroccoliError::BrokerNonIdempotentOp` is handled automatically by `process_messages` — it logs the error and continues the loop without crashing. You will see this variant only if you use the manual `consume` API with concurrent SurrealDB reads.
+</Note>

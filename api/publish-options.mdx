@@ -1,0 +1,104 @@
+---
+title: "PublishOptions and PublishOptionsBuilder API"
+sidebarTitle: "PublishOptions"
+description: "Reference for PublishOptions — configure TTL, message priority, delayed delivery, and scheduled time when publishing messages to a Broccoli queue."
+---
+
+`PublishOptions` is an optional struct passed to `publish` and `publish_batch` to customize how a message is delivered. All fields are optional — omit any field to use the broker default. Build instances using the `PublishOptionsBuilder` returned by `PublishOptions::builder()`.
+
+```rust
+use broccoli_queue::queue::{PublishOptions, PublishOptionsBuilder};
+use time::{Duration, OffsetDateTime};
+```
+
+## Builder Pattern
+
+```rust
+let options = PublishOptions::builder()
+    .priority(1)
+    .ttl(Duration::minutes(30))
+    .delay(Duration::seconds(60))
+    .build();
+
+queue.publish("jobs", None, &payload, Some(options)).await?;
+```
+
+## Fields
+
+<ParamField path="ttl" type="Option<time::Duration>">
+  Time-to-live for the message. After the TTL elapses from the time of publish, the message is discarded if it has not been consumed.
+</ParamField>
+
+<ParamField path="priority" type="Option<u8>">
+  Message priority level. `1` is the highest priority; `5` is the lowest (default). Messages with lower numbers are processed before messages with higher numbers. Must be in range `1..=5`.
+</ParamField>
+
+<ParamField path="delay" type="Option<time::Duration>">
+  Delay before the message becomes visible to consumers. Requires `.enable_scheduling(true)` on the queue builder.
+</ParamField>
+
+<ParamField path="scheduled_at" type="Option<time::OffsetDateTime>">
+  Specific UTC time at which the message becomes available for consumption. Requires `.enable_scheduling(true)` on the queue builder.
+</ParamField>
+
+## Builder Methods
+
+### `.ttl(duration: time::Duration) -> Self`
+
+Sets the time-to-live for the message.
+
+```rust
+let opts = PublishOptions::builder()
+    .ttl(Duration::hours(2))
+    .build();
+```
+
+### `.priority(priority: u8) -> Self`
+
+Sets the priority level. Values outside `1..=5` cause a panic.
+
+```rust
+let opts = PublishOptions::builder().priority(2).build();
+```
+
+### `.delay(duration: time::Duration) -> Self`
+
+Sets a relative delay before delivery.
+
+```rust
+let opts = PublishOptions::builder()
+    .delay(Duration::seconds(30))
+    .build();
+```
+
+### `.schedule_at(time: time::OffsetDateTime) -> Self`
+
+Sets an absolute delivery time.
+
+```rust
+let tomorrow = OffsetDateTime::now_utc() + Duration::days(1);
+let opts = PublishOptions::builder().schedule_at(tomorrow).build();
+```
+
+### `.build() -> PublishOptions`
+
+Constructs the `PublishOptions` struct from the builder state.
+
+## Default Values
+
+When `None` is passed as options to `publish`, Broccoli uses these defaults:
+
+| Field | Default |
+|---|---|
+| `ttl` | No expiry |
+| `priority` | `5` (lowest) |
+| `delay` | None (immediate) |
+| `scheduled_at` | None (immediate) |
+
+<Warning>
+  Message scheduling (`delay` or `scheduled_at`) requires `.enable_scheduling(true)` on the `BroccoliQueueBuilder`. For the RabbitMQ backend, the `rabbitmq_delayed_message_exchange` plugin must also be installed. See the [Scheduling guide](/guides/scheduling).
+</Warning>
+
+<Note>
+  Do not set both `delay` and `scheduled_at` in the same `PublishOptions`. Provide one or the other. If both are set, behavior is broker-dependent.
+</Note>

@@ -1,0 +1,130 @@
+---
+title: "Publishing Messages to a Broccoli Queue"
+sidebarTitle: "Publishing"
+description: "Publish single and batched messages to Broccoli queues with options for priority, TTL, delayed delivery, and scheduled time."
+---
+
+Publishing a message in Broccoli means serializing your Rust struct and writing it to the broker. The `publish` and `publish_batch` methods on `BroccoliQueue` handle serialization, broker-specific wire formats, and return the stored `BrokerMessage<T>` so you can capture the assigned `task_id`.
+
+## Publish a Single Message
+
+```rust
+use broccoli_queue::queue::BroccoliQueue;
+use broccoli_queue::brokers::broker::BrokerMessage;
+
+let published: BrokerMessage<MyPayload> = queue
+    .publish("jobs", None, &payload, None)
+    .await?;
+
+println!("Published with task_id: {}", published.task_id);
+```
+
+The four parameters are:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `topic` | `&str` | The queue or topic name |
+| `disambiguator` | `Option<String>` | Fairness routing key; pass `None` for standard queues |
+| `message` | `&T` | Your payload — any type implementing `Clone + Serialize + DeserializeOwned` |
+| `options` | `Option<PublishOptions>` | Optional TTL, priority, delay, or scheduled time |
+
+`publish` returns `Result<BrokerMessage<T>, BroccoliError>`. The returned message includes the `task_id` assigned by the broker, which you can use to call `cancel()` later.
+
+## Publish a Batch
+
+`publish_batch` accepts any `IntoIterator<Item = T>` and returns `Vec<BrokerMessage<T>>`. Publishing in a batch is more efficient than calling `publish` in a loop because Broccoli can pipeline broker writes.
+
+```rust
+let payloads = vec![
+    MyPayload { id: "a".into(), .. },
+    MyPayload { id: "b".into(), .. },
+    MyPayload { id: "c".into(), .. },
+];
+
+let published = queue
+    .publish_batch("jobs", None, payloads, None)
+    .await?;
+
+println!("Published {} messages", published.len());
+```
+
+## PublishOptions
+
+`PublishOptions` lets you customize how a message is delivered. All fields are optional — use the builder to set only what you need.
+
+```rust
+use broccoli_queue::queue::PublishOptions;
+use time::Duration;
+
+let options = PublishOptions::builder()
+    .priority(1)             // highest priority
+    .ttl(Duration::minutes(30))
+    .build();
+
+queue.publish("jobs", None, &payload, Some(options)).await?;
+```
+
+### Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `ttl` | `Option<time::Duration>` | Time-to-live for the message. After expiry the message is discarded. |
+| `priority` | `Option<u8>` | `1` = highest priority, `5` = lowest (default). Must be 1–5. |
+| `delay` | `Option<time::Duration>` | Delay before the message becomes available for consumption. |
+| `scheduled_at` | `Option<time::OffsetDateTime>` | Specific UTC time to make the message available. |
+
+### Priority
+
+Messages with lower priority numbers are processed first. Priority `1` is the highest and `5` is the lowest. The default when no priority is specified is `5`.
+
+```rust
+// Publish a high-priority message
+let opts = PublishOptions::builder().priority(1).build();
+queue.publish("jobs", None, &urgent_payload, Some(opts)).await?;
+
+// Publish a low-priority message (same as default)
+let opts = PublishOptions::builder().priority(5).build();
+queue.publish("jobs", None, &background_payload, Some(opts)).await?;
+```
+
+<Note>
+  Passing a priority value outside the range 1–5 will cause a panic. Validate user-supplied priority values before passing them to the builder.
+</Note>
+
+### Delayed Delivery
+
+Use `delay` to make a message available after a fixed duration, or `scheduled_at` to target a specific moment in time:
+
+```rust
+use time::{Duration, OffsetDateTime};
+
+// Available in 60 seconds
+let opts = PublishOptions::builder()
+    .delay(Duration::seconds(60))
+    .build();
+
+// Available at a specific time
+let next_midnight = OffsetDateTime::now_utc()
+    .replace_time(time::Time::MIDNIGHT)
+    + Duration::days(1);
+
+let opts = PublishOptions::builder()
+    .schedule_at(next_midnight)
+    .build();
+```
+
+<Warning>
+  Message scheduling (both `delay` and `scheduled_at`) requires `.enable_scheduling(true)` on the queue builder. For RabbitMQ, the `rabbitmq_delayed_message_exchange` plugin must also be installed. See the [Scheduling guide](/guides/scheduling) for full setup instructions.
+</Warning>
+
+## Cancelling a Published Message
+
+If you need to remove a message before it is consumed, use `queue.cancel()` with the `task_id` from the returned `BrokerMessage<T>`:
+
+```rust
+let published = queue.publish("jobs", None, &payload, None).await?;
+let task_id = published.task_id.to_string();
+
+// Later, cancel before it is consumed
+queue.cancel("jobs", task_id).await?;
+```

@@ -1,0 +1,134 @@
+---
+title: "Installing Broccoli Queue in Your Rust Project"
+sidebarTitle: "Installation"
+description: "Add broccoli_queue to your Cargo.toml with feature flags for Redis, RabbitMQ, or SurrealDB. Broccoli is published on crates.io and installed via Cargo."
+---
+
+Broccoli is published on [crates.io](https://crates.io/crates/broccoli_queue) as `broccoli_queue`. Add it to your project with Cargo — no additional tooling required. The default configuration enables the Redis backend, so most projects need only a single line in `Cargo.toml`.
+
+## Minimal Installation
+
+```toml Cargo.toml
+[dependencies]
+broccoli_queue = "0.4"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+```
+
+This installs Broccoli with the `redis` feature enabled by default.
+
+## Feature Flags
+
+Broccoli uses Cargo feature flags to select the broker backend and enable optional functionality. You must enable at least one broker backend or the crate will not compile.
+
+<Warning>
+  Broccoli will fail to compile with the error `you must enable at least one of the following features: redis, rabbitmq, surrealdb` if no broker backend feature is enabled. The default feature set enables `redis`.
+</Warning>
+
+| Feature | Default | Description |
+|---|---|---|
+| `redis` | ✓ | Redis backend via `bb8-redis` connection pool |
+| `rabbitmq` | — | RabbitMQ backend via `lapin` + `deadpool-lapin` |
+| `surrealdb` | — | SurrealDB backend (remote `ws://` or in-memory `mem://`) |
+| `management` | — | Enables `queue_status` and `QueueStatus` introspection API |
+| `test-fairness` | — | Internal testing only — do not use in production |
+
+### Selecting a Backend
+
+<CodeGroup>
+
+```toml Redis (default)
+[dependencies]
+broccoli_queue = "0.4"
+```
+
+```toml RabbitMQ only
+[dependencies]
+broccoli_queue = { version = "0.4", default-features = false, features = ["rabbitmq"] }
+```
+
+```toml SurrealDB only
+[dependencies]
+broccoli_queue = { version = "0.4", default-features = false, features = ["surrealdb"] }
+```
+
+```toml Redis + Management API
+[dependencies]
+broccoli_queue = { version = "0.4", features = ["management"] }
+```
+
+</CodeGroup>
+
+## Broker Prerequisites
+
+Each backend requires a running broker service. Use Docker to start one locally.
+
+<Tabs>
+  <Tab title="Redis">
+    Redis is the default backend. Connect with a `redis://` URL.
+
+    ```bash
+    docker run -d -p 6379:6379 redis:7
+    ```
+
+    Connection URL formats:
+    ```
+    redis://localhost:6379
+    redis://user:password@localhost:6379/0
+    rediss://my-redis.example.com:6380
+    ```
+
+    <Note>
+      The `rediss://` scheme enables TLS connections via `tokio-rustls`.
+    </Note>
+  </Tab>
+  <Tab title="RabbitMQ">
+    The `rabbitmq` feature enables the RabbitMQ backend via the `lapin` AMQP client.
+
+    ```bash
+    docker run -d --hostname my-rabbit \
+      --name some-rabbit \
+      -p 5672:5672 -p 15672:15672 \
+      rabbitmq:3-management
+    ```
+
+    Connection URL formats:
+    ```
+    amqp://guest:guest@localhost:5672
+    amqps://user:password@my-rabbit.example.com:5671
+    ```
+
+    <Note>
+      If you plan to use message scheduling with RabbitMQ, you must install the `rabbitmq_delayed_message_exchange` plugin. See the [RabbitMQ broker guide](/brokers/rabbitmq) for details.
+    </Note>
+  </Tab>
+  <Tab title="SurrealDB">
+    The `surrealdb` feature supports both remote server and in-memory connections.
+
+    ```bash
+    # Remote SurrealDB server
+    docker run -d -p 8000:8000 surrealdb/surrealdb:latest start
+    ```
+
+    Connection URL formats:
+    ```
+    ws://localhost:8000
+    wss://surreal.example.com
+    mem://
+    ```
+
+    <Tip>
+      The `mem://` URL runs SurrealDB entirely in-process with no external dependency — perfect for unit tests.
+    </Tip>
+  </Tab>
+</Tabs>
+
+## Verifying the Installation
+
+After adding the dependency, build your project to confirm everything compiles:
+
+```bash
+cargo build
+```
+
+If the build succeeds, proceed to the [Quickstart](/quickstart) to write your first publisher and consumer.

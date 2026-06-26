@@ -1,0 +1,152 @@
+---
+title: "Consuming and Processing Messages from Broccoli"
+sidebarTitle: "Consuming"
+description: "Consume messages manually or use process_messages for concurrent worker loops with automatic acknowledgment and rejection on error."
+---
+
+Broccoli provides two consumption patterns: manual consume-acknowledge loops for fine-grained control, and `process_messages` / `process_messages_with_handlers` for production worker loops that handle concurrency, acknowledgment, and error routing automatically.
+
+## Manual Consumption
+
+### Blocking Consume
+
+`queue.consume()` blocks until a message is available. After consumption, the message sits in the processing queue until you call `acknowledge` or `reject`.
+
+```rust
+use broccoli_queue::brokers::broker::BrokerMessage;
+
+let msg: BrokerMessage<MyPayload> = queue
+    .consume("jobs", None)
+    .await?;
+
+// Process and acknowledge
+process(&msg.payload).await?;
+queue.acknowledge("jobs", msg).await?;
+```
+
+### Non-Blocking Consume
+
+`queue.try_consume()` returns immediately. If no message is available it returns `Ok(None)`.
+
+```rust
+if let Some(msg) = queue.try_consume::<MyPayload>("jobs", None).await? {
+    process(&msg.payload).await?;
+    queue.acknowledge("jobs", msg).await?;
+}
+```
+
+### Batch Consume
+
+Consume multiple messages at once. `consume_batch` blocks until `batch_size` messages are collected or the `timeout` elapses. `try_consume_batch` is non-blocking.
+
+```rust
+use time::Duration;
+
+// Blocking batch — waits up to 5 seconds for up to 10 messages
+let messages = queue
+    .consume_batch::<MyPayload>("jobs", 10, Duration::seconds(5), None)
+    .await?;
+
+// Non-blocking batch — returns whatever is available right now
+let messages = queue
+    .try_consume_batch::<MyPayload>("jobs", 10, None)
+    .await?;
+
+for msg in messages {
+    process(&msg.payload).await?;
+    queue.acknowledge("jobs", msg).await?;
+}
+```
+
+## Acknowledge, Reject, and Cancel
+
+| Method | Effect |
+|---|---|
+| `acknowledge(topic, msg)` | Removes the message from the processing queue permanently — the message is complete |
+| `reject(topic, msg)` | Re-queues the message for retry (if attempts remain) or moves it to the failed queue |
+| `cancel(topic, task_id)` | Deletes a message from the queue by ID before it is consumed |
+
+## process\_messages (Recommended)
+
+`process_messages` is the recommended way to run production workers. It spawns a configurable number of concurrent tasks that each run a blocking consume-handle-ack loop indefinitely.
+
+```rust
+use broccoli_queue::brokers::broker::BrokerMessage;
+
+queue.process_messages(
+    "jobs",
+    Some(4),   // 4 concurrent workers; None = single loop
+    None,      // ConsumeOptions
+    |msg: BrokerMessage<MyPayload>| async move {
+        println!("Processing: {:?}", msg.payload);
+        Ok(())
+    },
+).await?;
+```
+
+**Behavior:**
+- Handler returns `Ok(())` → `acknowledge` is called automatically
+- Handler returns `Err(e)` → `reject` is called automatically; the error is logged
+
+The method runs indefinitely and only returns on a fatal broker error.
+
+## process\_messages\_with\_handlers
+
+For cases where you need custom logic on success or failure, use `process_messages_with_handlers`. It accepts three async functions: a main handler, a success callback, and an error callback.
+
+```rust
+use broccoli_queue::{brokers::broker::BrokerMessage, error::BroccoliError};
+
+queue.process_messages_with_handlers(
+    "jobs",
+    Some(3),
+    None,
+    // Main handler
+    |msg: BrokerMessage<MyPayload>| async move {
+        let result = do_work(&msg.payload).await?;
+        Ok(result)
+    },
+    // On success
+    |msg: BrokerMessage<MyPayload>, result| async move {
+        println!("Done: {} -> {:?}", msg.task_id, result);
+        Ok(())
+    },
+    // On error
+    |msg: BrokerMessage<MyPayload>, err: BroccoliError| async move {
+        eprintln!("Failed task {}: {}", msg.task_id, err);
+        Ok(())
+    },
+).await?;
+```
+
+## ConsumeOptions
+
+Pass `ConsumeOptions` to any consume method to customize behavior.
+
+```rust
+use broccoli_queue::queue::ConsumeOptions;
+
+let options = ConsumeOptions::builder()
+    .auto_ack(false)          // don't auto-acknowledge (default)
+    .fairness(true)           // consume from fairness sub-queues (Redis only)
+    .consume_wait(std::time::Duration::from_millis(10)) // allow task cancellation
+    .handler_ack(true)        // process_messages auto-acks on success (default)
+    .build();
+
+queue.process_messages("jobs", Some(4), Some(options), handler).await?;
+```
+
+| Field | Default | Description |
+|---|---|---|
+| `auto_ack` | `false` | Auto-acknowledge on consume. Calling `acknowledge`/`reject` afterwards returns an error. |
+| `fairness` | `None` | Consume from fairness sub-queues in round-robin order. Redis only. |
+| `consume_wait` | zero | Sleep duration inserted in consumer loops. A non-zero value allows Tokio to abort spawned consumer tasks. |
+| `handler_ack` | `true` | When `true`, `process_messages` calls `acknowledge` automatically after a successful handler. Set to `false` to delegate acknowledgment to another actor. |
+
+<Warning>
+  If `auto_ack` is `true`, calling `acknowledge` or `reject` on the returned message will return a `BroccoliError`. Do not mix `auto_ack: true` with manual acknowledgment.
+</Warning>
+
+<Tip>
+  Set `consume_wait` to a non-zero duration (e.g. `Duration::from_millis(10)`) when you spawn `process_messages` inside a `tokio::spawn` task and need to be able to cancel it with `JoinHandle::abort()`. Without a yield point, Tokio cannot interrupt the loop.
+</Tip>

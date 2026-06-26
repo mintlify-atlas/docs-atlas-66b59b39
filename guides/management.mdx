@@ -1,0 +1,143 @@
+---
+title: "Queue Management and Introspection in Broccoli"
+sidebarTitle: "Management"
+description: "Use the management feature flag to inspect queue status, message counts, and processing state for monitoring, alerting, and operational visibility."
+---
+
+Broccoli provides two levels of queue introspection: the `size()` method available without any feature flags, and the richer `queue_status()` method unlocked by the `management` Cargo feature. Both are useful for building monitoring dashboards, health check endpoints, and alerting integrations.
+
+## Queue Size
+
+`queue.size(queue_name)` is available on all queues regardless of feature flags. It returns a `HashMap<String, u64>` mapping each internal sub-queue name to its current message count.
+
+```rust
+let sizes = queue.size("jobs").await?;
+for (name, count) in &sizes {
+    println!("{}: {} messages", name, count);
+}
+```
+
+Example output for a queue with pending, in-flight, and failed messages:
+
+```
+jobs: 42
+jobs_processing: 3
+jobs_failed: 1
+```
+
+For fairness queues, each disambiguator sub-queue appears separately:
+
+```
+jobs_tenant-a_queue: 18
+jobs_tenant-b_queue: 5
+jobs_tenant-a_processing: 2
+```
+
+## Queue Status (Management Feature)
+
+The `management` feature enables `queue.queue_status()`, which returns a `QueueStatus` struct with a consolidated view of queue health.
+
+### Enable the Feature
+
+```toml Cargo.toml
+[dependencies]
+broccoli_queue = { version = "0.4", features = ["redis", "management"] }
+```
+
+Import the types:
+
+```rust
+use broccoli_queue::brokers::management::{QueueStatus, QueueType};
+```
+
+### Call queue\_status
+
+```rust
+#[cfg(feature = "management")]
+async fn check_queue_health(queue: &BroccoliQueue) -> Result<(), BroccoliError> {
+    let status = queue
+        .queue_status("jobs".to_string(), None)
+        .await?;
+
+    println!("Queue:      {}", status.name);
+    println!("Type:       {}", status.queue_type);
+    println!("Pending:    {}", status.size);
+    println!("Processing: {}", status.processing);
+    println!("Failed:     {}", status.failed);
+
+    if let Some(count) = status.disambiguator_count {
+        println!("Fairness sub-queues: {}", count);
+    }
+
+    Ok(())
+}
+```
+
+### QueueStatus Fields
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `String` | Queue name |
+| `queue_type` | `QueueType` | Main, Processing, Failed, or Fairness |
+| `size` | `usize` | Messages in the main queue (waiting to be consumed) |
+| `processing` | `usize` | Messages currently in the processing queue (being handled) |
+| `failed` | `usize` | Messages in the failed queue (exhausted retries) |
+| `disambiguator_count` | `Option<usize>` | Number of active fairness sub-queues (if applicable) |
+
+### With Fairness Queues
+
+Pass a `disambiguator` to get the status of a specific tenant's sub-queue:
+
+```rust
+let status = queue
+    .queue_status("jobs".to_string(), Some("tenant-abc".to_string()))
+    .await?;
+```
+
+## QueueType Enum
+
+`QueueType` indicates which logical queue a status refers to:
+
+| Variant | Display | Description |
+|---|---|---|
+| `Main` | `"main"` | The primary message queue |
+| `Processing` | `"processing"` | Messages currently being processed |
+| `Failed` | `"failed"` | Messages that exceeded their retry limit |
+| `Fairness` | `"fairness"` | A per-disambiguator fairness sub-queue |
+
+`QueueType` implements `Display`, `Debug`, `Clone`, `PartialEq`, and `Eq`.
+
+## Building a Health Check
+
+Here is a complete example of a health check function that returns an error if failed messages exceed a threshold:
+
+```rust
+#[cfg(feature = "management")]
+async fn assert_queue_healthy(
+    queue: &BroccoliQueue,
+    topic: &str,
+    max_failed: usize,
+) -> Result<(), String> {
+    let status = queue
+        .queue_status(topic.to_string(), None)
+        .await
+        .map_err(|e| format!("Failed to get queue status: {}", e))?;
+
+    if status.failed > max_failed {
+        return Err(format!(
+            "Queue '{}' has {} failed messages (limit: {})",
+            status.name, status.failed, max_failed
+        ));
+    }
+
+    Ok(())
+}
+```
+
+<Warning>
+  The management feature is not supported with the SurrealDB backend. Calling `queue_status()` on a SurrealDB-backed queue will return a `BroccoliError::NotImplemented` or will not compile depending on how features are combined.
+</Warning>
+
+<Note>
+  The `management` feature changes the internal broker type from `Box<dyn Broker>` to `Box<dyn BrokerWithManagement>`. This is transparent at the `BroccoliQueue` level — all existing methods work identically. The only addition is the `queue_status()` method.
+</Note>

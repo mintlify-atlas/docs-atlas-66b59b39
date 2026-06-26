@@ -1,0 +1,98 @@
+---
+title: "Redis Broker Backend for Broccoli Queue"
+sidebarTitle: "Redis"
+description: "Configure and use Redis as the Broccoli message broker backend. Redis is the default backend backed by a bb8-redis connection pool with sorted set queues."
+---
+
+Redis is the default and most feature-complete Broccoli backend. It uses a `bb8-redis` connection pool for high-throughput async I/O, stores messages in Redis sorted sets for priority ordering, and supports the full Broccoli feature set including fairness queues, message scheduling, and the management API.
+
+## Setup
+
+Redis is enabled by default — no explicit feature flag is needed:
+
+```toml Cargo.toml
+[dependencies]
+broccoli_queue = "0.4"
+```
+
+Start a Redis instance with Docker:
+
+```bash
+docker run -d -p 6379:6379 redis:7
+```
+
+## Connection URL
+
+Broccoli connects to Redis using a standard connection URL. The URL scheme (`redis://` or `rediss://`) controls whether TLS is used.
+
+```
+redis://localhost:6379
+redis://user:password@localhost:6379/0
+rediss://my-redis.example.com:6380
+```
+
+<Note>
+  The `rediss://` scheme enables TLS connections via `tokio-rustls`, which is included in the `redis` feature dependency.
+</Note>
+
+## Connecting
+
+```rust
+use broccoli_queue::queue::BroccoliQueue;
+
+let queue = BroccoliQueue::builder("redis://localhost:6379")
+    .pool_connections(10)  // default: 10
+    .build()
+    .await?;
+```
+
+## Connection Pooling
+
+The Redis backend uses `bb8-redis` for connection pooling. Key pool behaviors:
+
+| Setting | Default | Description |
+|---|---|---|
+| `pool_connections` | `10` | Maximum number of pooled connections |
+| Connection timeout | `2 seconds` | Time to wait for a connection from the pool |
+
+Connections are acquired from the pool for each operation and returned immediately after. The pool is shared across all clones of the `BroccoliQueue` via `Arc`.
+
+## Internal Queue Structure
+
+Broccoli organizes messages across multiple Redis keys per topic:
+
+| Key | Redis type | Contents |
+|---|---|---|
+| `{topic}` | Sorted set | Main queue — messages ordered by priority and timestamp |
+| `{topic}_processing` | List | Messages currently being processed |
+| `{topic}_failed` | List | Messages that exhausted their retry limit |
+| `{topic}_{disambiguator}_queue` | Sorted set | Fairness sub-queue for a specific disambiguator |
+| `{topic}_{disambiguator}_processing` | List | Processing queue for a fairness sub-queue |
+
+Messages in the main sorted set use a score derived from timestamp and priority, so lower-priority-number messages (higher priority) are consumed first. The `BRPOPLPUSH` pattern is used to atomically move messages into the processing queue, ensuring at-least-once delivery even if a consumer crashes.
+
+## Supported Features
+
+| Feature | Supported |
+|---|---|
+| Fairness queues | ✓ |
+| Message scheduling | ✓ |
+| Message priority (1–5) | ✓ |
+| Message TTL | ✓ |
+| Management API | ✓ |
+
+## With the Management API
+
+Enable the `management` feature to use `queue.queue_status()`:
+
+```toml Cargo.toml
+broccoli_queue = { version = "0.4", features = ["management"] }
+```
+
+```rust
+#[cfg(feature = "management")]
+let status = queue.queue_status("jobs".to_string(), None).await?;
+println!("Failed: {}", status.failed);
+```
+
+See the [Management guide](/guides/management) for full details.

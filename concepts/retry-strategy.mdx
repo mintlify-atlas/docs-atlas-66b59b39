@@ -1,0 +1,112 @@
+---
+title: "Retry Strategies for Failed Messages in Broccoli"
+sidebarTitle: "Retry Strategy"
+description: "Configure how Broccoli handles failed messages — set retry attempt limits, disable retries entirely, and understand the failed queue behavior."
+---
+
+In any distributed system, message processing can fail transiently — network timeouts, downstream service errors, or application bugs. Broccoli's retry strategy configuration lets you decide whether failed messages should be retried, how many times, and what happens when the limit is exhausted. This is configured once at the queue level via the builder and applies to all messages on that queue.
+
+## RetryStrategy Struct
+
+`RetryStrategy` controls what happens when a message handler returns an `Err`. It has two fields:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `retry_failed` | `bool` | `true` | Whether failed messages should be retried at all |
+| `attempts` | `Option<u8>` | `Some(3)` | Maximum number of processing attempts; `None` defaults to 3 |
+
+## Builder Methods
+
+`RetryStrategy` uses a const-compatible builder pattern:
+
+```rust
+use broccoli_queue::queue::RetryStrategy;
+
+// Default: 3 attempts, retries enabled
+let strategy = RetryStrategy::new();
+
+// Custom attempt count
+let strategy = RetryStrategy::new().with_attempts(5);
+
+// Disable retries entirely — failed messages go straight to the failed queue
+let strategy = RetryStrategy::new().retry_failed(false);
+```
+
+All builder methods (`new()`, `with_attempts()`, `retry_failed()`) are `const fn` and can be used in `const` contexts.
+
+## Applying a Retry Strategy
+
+Pass a `RetryStrategy` to the queue builder via `failed_message_retry_strategy()`:
+
+```rust
+use broccoli_queue::queue::{BroccoliQueue, RetryStrategy};
+
+// 5 retries before moving to the failed queue
+let queue = BroccoliQueue::builder("redis://localhost:6379")
+    .failed_message_retry_strategy(
+        RetryStrategy::new().with_attempts(5)
+    )
+    .build()
+    .await?;
+
+// No retries — immediately to the failed queue on first failure
+let queue = BroccoliQueue::builder("redis://localhost:6379")
+    .failed_message_retry_strategy(
+        RetryStrategy::new().retry_failed(false)
+    )
+    .build()
+    .await?;
+
+// Default strategy (3 attempts) using Default::default()
+let queue = BroccoliQueue::builder("redis://localhost:6379")
+    .failed_message_retry_strategy(Default::default())
+    .build()
+    .await?;
+```
+
+## What Happens on Failure
+
+When `process_messages` or `process_messages_with_handlers` receives an `Err` from your handler, it calls `reject()` on the message. The rejection behavior depends on the configured strategy:
+
+1. **`retry_failed = true` and attempts not exhausted** — The message is re-queued in the main queue with `attempts` incremented. It will be picked up by the next available worker.
+
+2. **`retry_failed = true` and attempts exhausted** — The message is moved to the failed queue (named `{topic}_failed`). It will not be automatically retried again.
+
+3. **`retry_failed = false`** — The message is moved to the failed queue immediately, regardless of `attempts`.
+
+You can inspect the `attempts` field on a `BrokerMessage<T>` to implement backoff logic in your handler:
+
+```rust
+queue.process_messages(
+    "jobs",
+    Some(4),
+    None,
+    |msg: BrokerMessage<JobPayload>| async move {
+        if msg.attempts > 0 {
+            // Exponential backoff on retries
+            let wait_ms = 100u64 * 2u64.pow(msg.attempts as u32);
+            tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
+        }
+        process(&msg.payload).await
+    },
+).await?;
+```
+
+## Inspecting Failed Messages
+
+Use `queue.size(queue_name)` to see how many messages are in the failed queue:
+
+```rust
+let sizes = queue.size("jobs").await?;
+if let Some(&failed_count) = sizes.get("jobs_failed") {
+    if failed_count > 0 {
+        eprintln!("WARNING: {} failed messages in jobs queue", failed_count);
+    }
+}
+```
+
+With the `management` feature enabled, `queue.queue_status()` provides a richer breakdown including `failed`, `processing`, and `size` counts in a single `QueueStatus` struct.
+
+<Warning>
+  The `attempts` counter is persisted in the broker alongside the message. If your application restarts, the counter is preserved — a message that failed 2 times before a restart will still show `attempts = 2` on the next attempt.
+</Warning>

@@ -1,0 +1,92 @@
+---
+title: "Broccoli: Async Message Queue for Rust"
+sidebarTitle: "Introduction"
+description: "Broccoli is a type-safe, async-first message queue library for Rust built on Tokio, designed as a Celery alternative with Redis, RabbitMQ, and SurrealDB support."
+---
+
+Broccoli is a robust message queue library for Rust applications, built on Tokio's async runtime. Designed as a Rust alternative to Python's Celery, it provides a clean, type-safe API for publishing and consuming messages across multiple broker backends — Redis (default), RabbitMQ, and SurrealDB — all behind a single unified interface.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Publish and consume your first message in under five minutes.
+  </Card>
+  <Card title="Installation" icon="box" href="/installation">
+    Add Broccoli to your Cargo.toml with the right feature flags.
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/queue">
+    Understand queues, messages, brokers, and retry behavior.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/broccoli-queue">
+    Full reference for every public type and method.
+  </Card>
+</CardGroup>
+
+## Key Features
+
+Broccoli combines Rust's compile-time safety with production-ready message queue capabilities.
+
+<CardGroup cols={3}>
+  <Card title="Async-First" icon="bolt">
+    Built on Tokio. All operations are fully async with zero blocking I/O in the hot path.
+  </Card>
+  <Card title="Multiple Backends" icon="database">
+    Redis (default), RabbitMQ, and SurrealDB — enabled via Cargo feature flags, same API for all.
+  </Card>
+  <Card title="Type-Safe Messages" icon="shield-check">
+    Generic `BrokerMessage<T>` ensures payloads are serialized and deserialized correctly at compile time.
+  </Card>
+  <Card title="Retry Strategies" icon="rotate">
+    Configure per-queue retry limits and failure behavior. Exhausted messages move to a dedicated failed queue.
+  </Card>
+  <Card title="Message Scheduling" icon="clock">
+    Delay delivery or schedule messages for a specific future time, supported across all backends.
+  </Card>
+  <Card title="Fairness Queues" icon="scale-balanced">
+    Route messages by disambiguator key to ensure equitable per-tenant or per-user processing.
+  </Card>
+</CardGroup>
+
+## How It Works
+
+Broccoli follows a simple three-step model that maps directly to Celery's producer-consumer pattern.
+
+<Steps>
+  <Step title="Configure a broker connection">
+    Use the builder pattern to connect to your chosen broker backend. Pass a URL and optional configuration such as pool size and retry strategy.
+
+    ```rust
+    use broccoli_queue::queue::BroccoliQueue;
+
+    let queue = BroccoliQueue::builder("redis://localhost:6379")
+        .pool_connections(5)
+        .failed_message_retry_strategy(Default::default())
+        .build()
+        .await?;
+    ```
+  </Step>
+  <Step title="Publish messages">
+    Serialize any `serde`-compatible Rust type as a message. Publish single messages or batches with optional priority, TTL, or delay.
+
+    ```rust
+    queue.publish("jobs", None, &my_payload, None).await?;
+    ```
+  </Step>
+  <Step title="Consume and process">
+    Use `process_messages` to spin up concurrent worker loops. Broccoli handles acknowledgment automatically on success and rejection on failure.
+
+    ```rust
+    queue.process_messages("jobs", Some(4), None, |msg| async move {
+        println!("Processing: {:?}", msg.payload);
+        Ok(())
+    }).await?;
+    ```
+  </Step>
+</Steps>
+
+## Compared to Celery
+
+If you are coming from Python with Celery experience, Broccoli maps to familiar concepts: tasks become typed message payloads, workers become `process_messages` handlers, and the same brokers (Redis, RabbitMQ) are supported. The key difference is Rust's type system — your message payload type is checked at compile time, eliminating an entire class of runtime deserialization bugs that Celery users encounter in production.
+
+<Note>
+  Broccoli is actively developed and welcomes contributions. Visit the [GitHub repository](https://github.com/densumesh/broccoli) to report issues, request features, or submit pull requests.
+</Note>

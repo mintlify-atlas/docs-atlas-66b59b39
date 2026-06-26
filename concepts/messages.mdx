@@ -1,0 +1,82 @@
+---
+title: "Messages in Broccoli: BrokerMessage and Payloads"
+sidebarTitle: "Messages"
+description: "Broccoli wraps every payload in a BrokerMessage<T> envelope with a unique task_id, attempt counter, and optional disambiguator for fairness routing."
+---
+
+Every piece of data that flows through a Broccoli queue is wrapped in a `BrokerMessage<T>` envelope. This envelope carries your user-defined payload alongside Broccoli-managed metadata: a unique identifier, a retry counter, and an optional fairness routing key. Understanding this type is essential for writing handlers and reasoning about message lifecycle.
+
+## The BrokerMessage\<T\> Type
+
+`BrokerMessage<T>` is a generic struct where `T` is your application-defined payload type. It is returned by `publish`, `consume`, and `try_consume`, and it is the argument type received in `process_messages` handlers.
+
+```rust
+use broccoli_queue::brokers::broker::BrokerMessage;
+
+pub struct BrokerMessage<T: Clone> {
+    pub task_id: uuid::Uuid,
+    pub payload: T,
+    pub attempts: u8,
+    pub disambiguator: Option<String>,
+    // metadata is pub(crate) — not accessible to users
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `uuid::Uuid` | Unique identifier generated automatically on publish via `Uuid::new_v4()` |
+| `payload` | `T` | Your application message content |
+| `attempts` | `u8` | Number of processing attempts; incremented each time the message is retried |
+| `disambiguator` | `Option<String>` | Fairness routing key set at publish time; `None` for standard queues |
+
+## Defining a Message Payload
+
+Any Rust type that implements `Clone + serde::Serialize + serde::de::DeserializeOwned` can be used as a message payload. The `#[derive]` macros handle this for most structs:
+
+```rust
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct JobPayload {
+    id: String,
+    task_name: String,
+    priority: u8,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+```
+
+Nested types are supported as long as all fields also implement the required traits.
+
+## Message Lifecycle
+
+Messages follow a predictable path through the system:
+
+1. **Created on publish** — `BrokerMessage::new(payload, disambiguator)` is called internally when you invoke `queue.publish()`. The `task_id` is generated at this point and `attempts` starts at `0`.
+
+2. **Held in the main queue** — The serialized message waits in the broker's main queue until a consumer is ready.
+
+3. **Moved to processing queue on consume** — When `queue.consume()` is called, the message is atomically moved to a processing queue (e.g., `{topic}_processing` in Redis). This ensures at-least-once delivery even if the consumer crashes.
+
+4. **Resolved by acknowledge or reject**:
+   - `queue.acknowledge(topic, msg)` — permanently removes the message from the processing queue
+   - `queue.reject(topic, msg)` — increments `attempts` and re-queues the message if the retry limit has not been reached, otherwise moves it to the failed queue (`{topic}_failed`)
+
+```rust
+// Manual consume-acknowledge pattern
+let msg = queue.consume::<JobPayload>("jobs", None).await?;
+match process(&msg.payload).await {
+    Ok(_) => queue.acknowledge("jobs", msg).await?,
+    Err(e) => {
+        eprintln!("Failed after {} attempt(s): {}", msg.attempts + 1, e);
+        queue.reject("jobs", msg).await?;
+    }
+}
+```
+
+<Tip>
+  The `process_messages` method handles acknowledge and reject automatically based on whether your handler returns `Ok` or `Err`. Use it instead of a manual consume loop for production workers — it also supports configurable concurrency and integrates with Tokio's task system.
+</Tip>
+
+## Internal Wire Format
+
+Internally, Broccoli uses `InternalBrokerMessage` as the wire format, where the payload is stored as a JSON string. This type is not part of the public API — you never construct it directly. Broccoli converts between `BrokerMessage<T>` and `InternalBrokerMessage` automatically using `serde_json` serialization on publish and deserialization on consume.

@@ -1,0 +1,98 @@
+---
+title: "BrokerMessage<T> Type Reference"
+sidebarTitle: "BrokerMessage"
+description: "Reference for BrokerMessage<T> — the typed message envelope carrying task_id, payload, retry attempts, and optional disambiguator returned by Broccoli queue operations."
+---
+
+`BrokerMessage<T>` is the message envelope returned by `publish`, `consume`, and `try_consume`. It carries your application payload alongside Broccoli-managed metadata including a unique identifier, retry counter, and optional fairness routing key. This is also the type received as the argument in `process_messages` handler closures.
+
+```rust
+use broccoli_queue::brokers::broker::BrokerMessage;
+```
+
+## Struct Definition
+
+```rust
+pub struct BrokerMessage<T: Clone> {
+    pub task_id: uuid::Uuid,
+    pub payload: T,
+    pub attempts: u8,
+    pub disambiguator: Option<String>,
+    // metadata: pub(crate) — not accessible to users
+}
+```
+
+## Fields
+
+<ResponseField name="task_id" type="uuid::Uuid">
+  Unique message identifier. Generated automatically on publish via `uuid::Uuid::new_v4()`. Use this to call `queue.cancel(topic, task_id.to_string())` if you need to remove the message before it is consumed.
+</ResponseField>
+
+<ResponseField name="payload" type="T">
+  The user-supplied message content. Deserialized from the broker's wire format (JSON) on consume.
+</ResponseField>
+
+<ResponseField name="attempts" type="u8">
+  Number of times this message has been attempted. Starts at `0` on first publish. Incremented each time the message is rejected and re-queued. Inspect this value in your handler to implement custom backoff logic.
+</ResponseField>
+
+<ResponseField name="disambiguator" type="Option<String>">
+  The fairness routing key set at publish time. `None` for messages published to standard (non-fairness) queues. Present when the message was published with a `disambiguator` argument.
+</ResponseField>
+
+## Type Constraints
+
+The type parameter `T` must implement:
+
+- `Clone` — required for internal message duplication during processing
+- `serde::Serialize` — used to serialize the payload to the broker's wire format
+- `serde::de::DeserializeOwned` — used to deserialize from the wire format on consume
+
+```rust
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct MyPayload {
+    id: String,
+    data: Vec<u8>,
+}
+```
+
+## Using in a Handler
+
+```rust
+use broccoli_queue::brokers::broker::BrokerMessage;
+
+queue.process_messages(
+    "jobs",
+    Some(4),
+    None,
+    |msg: BrokerMessage<MyPayload>| async move {
+        println!("task_id:       {}", msg.task_id);
+        println!("attempts:      {}", msg.attempts);
+        println!("payload.id:    {}", msg.payload.id);
+
+        if let Some(tenant) = &msg.disambiguator {
+            println!("tenant:        {}", tenant);
+        }
+
+        // Implement backoff based on attempt count
+        if msg.attempts > 0 {
+            let backoff_ms = 100u64 * 2u64.pow(msg.attempts as u32);
+            tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+        }
+
+        do_work(&msg.payload).await
+    },
+).await?;
+```
+
+## `BrokerMessage::new`
+
+```rust
+pub fn new(payload: T, disambiguator: Option<String>) -> Self
+```
+
+Creates a new `BrokerMessage` with a freshly generated `task_id` and `attempts = 0`. This is called internally by `publish` and `publish_batch` — you do not need to call it directly.
+
+## InternalBrokerMessage
+
+Broccoli uses `InternalBrokerMessage` as the internal wire format. It stores `payload` as a JSON string and `task_id` as a `String`. This type is not part of the public API and is never constructed by users. Broccoli converts between `BrokerMessage<T>` and `InternalBrokerMessage` automatically using `serde_json` on publish and consume.

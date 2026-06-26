@@ -1,0 +1,133 @@
+---
+title: "Fair Queue Processing with Disambiguators"
+sidebarTitle: "Fairness Queues"
+description: "Use Broccoli's fairness queue feature to ensure equitable message processing across multiple tenants, users, or job sources using disambiguator keys."
+---
+
+In a standard queue, a single tenant publishing thousands of messages can starve all other tenants waiting for workers. Broccoli's fairness queue feature prevents this by routing messages into per-disambiguator sub-queues and having consumers round-robin across them. Every tenant gets fair access to worker capacity regardless of how many messages they have queued.
+
+<Note>
+  Fairness queues are currently supported only by the **Redis** backend.
+</Note>
+
+## How Fairness Works
+
+When you publish a message with a non-`None` `disambiguator`, Broccoli creates a dedicated sub-queue for that key. Redis uses the following naming conventions:
+
+- Sub-queue: `{topic}_{disambiguator}_queue`
+- Processing queue: `{topic}_{disambiguator}_processing`
+
+When a consumer runs with `fairness: true`, it picks the next sub-queue in round-robin order, consuming one message from each in turn. This ensures that a tenant with 1,000 queued messages and a tenant with 10 queued messages each get roughly equal shares of worker time.
+
+## Publishing with a Disambiguator
+
+Pass the disambiguator as the second argument to `publish` or `publish_batch`. It is typically a tenant ID, user ID, or source identifier:
+
+```rust
+// Tenant A publishes many jobs
+for i in 0..100 {
+    queue.publish(
+        "jobs",
+        Some("tenant-a".to_string()),
+        &JobPayload { id: format!("a-{i}"), .. },
+        None,
+    ).await?;
+}
+
+// Tenant B publishes a few jobs — they should be processed fairly
+queue.publish(
+    "jobs",
+    Some("tenant-b".to_string()),
+    &JobPayload { id: "b-1".into(), .. },
+    None,
+).await?;
+```
+
+## Consuming from Fairness Queues
+
+Enable fairness consumption by passing `ConsumeOptions` with `fairness: true`:
+
+```rust
+use broccoli_queue::queue::{ConsumeOptions, BroccoliQueue};
+use broccoli_queue::brokers::broker::BrokerMessage;
+
+let options = ConsumeOptions::builder()
+    .fairness(true)
+    .build();
+
+queue.process_messages(
+    "jobs",
+    Some(4),
+    Some(options),
+    |msg: BrokerMessage<JobPayload>| async move {
+        println!(
+            "Processing job {} from tenant {:?}",
+            msg.payload.id,
+            msg.disambiguator
+        );
+        Ok(())
+    },
+).await?;
+```
+
+The `disambiguator` field on the received `BrokerMessage<T>` tells you which tenant the message belongs to.
+
+## Acknowledging Fairness Messages
+
+When manually calling `acknowledge` or `reject` on a fairness message, you must use the sub-queue name (not the topic name) as the first argument. The sub-queue name follows the pattern `{topic}_{disambiguator}_queue`:
+
+```rust
+let options = ConsumeOptions::builder().fairness(true).build();
+let msg = queue.consume::<JobPayload>("jobs", Some(options)).await?;
+
+// The topic for acknowledge must match the sub-queue name
+let sub_queue = format!("jobs_{}_queue",
+    msg.disambiguator.as_deref().unwrap_or(""));
+
+queue.acknowledge(&sub_queue, msg).await?;
+```
+
+<Tip>
+  When using `process_messages` with `fairness: true`, Broccoli handles the internal queue name routing automatically. You only need to manage sub-queue names directly when using the manual `consume`/`acknowledge`/`reject` API.
+</Tip>
+
+## Use Case: Per-Tenant SaaS Job Processing
+
+Fairness queues are particularly valuable in multi-tenant SaaS applications where each tenant submits background jobs:
+
+```rust
+use broccoli_queue::queue::{BroccoliQueue, ConsumeOptions};
+use broccoli_queue::brokers::broker::BrokerMessage;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ReportJob {
+    tenant_id: String,
+    report_type: String,
+}
+
+async fn run_worker(queue: BroccoliQueue) {
+    let options = ConsumeOptions::builder()
+        .fairness(true)
+        .build();
+
+    queue
+        .process_messages(
+            "reports",
+            Some(8),
+            Some(options),
+            |msg: BrokerMessage<ReportJob>| async move {
+                println!(
+                    "Generating {} report for tenant {}",
+                    msg.payload.report_type,
+                    msg.payload.tenant_id
+                );
+                // generate_report(&msg.payload).await
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+}
+```
+
+With this setup, even if tenant A submits 10,000 report jobs and tenant B submits 1, both tenants will see their reports start processing within a comparable timeframe.

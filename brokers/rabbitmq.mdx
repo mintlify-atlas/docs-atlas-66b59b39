@@ -1,0 +1,101 @@
+---
+title: "RabbitMQ Broker Backend for Broccoli Queue"
+sidebarTitle: "RabbitMQ"
+description: "Use RabbitMQ as the Broccoli message broker backend. Enable with the rabbitmq feature flag; powered by the lapin async AMQP client and deadpool-lapin."
+---
+
+The RabbitMQ backend uses `lapin`, a fully async AMQP client for Rust, combined with `deadpool-lapin` for connection pooling. It is suitable for production deployments where RabbitMQ is already part of the infrastructure or where advanced AMQP routing features are needed.
+
+## Setup
+
+Enable the `rabbitmq` feature flag. Since Redis is enabled by default, you typically also want `default-features = false`:
+
+```toml Cargo.toml
+[dependencies]
+broccoli_queue = { version = "0.4", default-features = false, features = ["rabbitmq"] }
+```
+
+Start RabbitMQ with Docker:
+
+```bash
+docker run -d --hostname my-rabbit \
+  --name some-rabbit \
+  -p 5672:5672 -p 15672:15672 \
+  rabbitmq:3-management
+```
+
+The management UI is available at `http://localhost:15672` (default credentials: `guest` / `guest`).
+
+## Connection URL
+
+RabbitMQ uses AMQP connection URLs:
+
+```
+amqp://guest:guest@localhost:5672
+amqp://user:password@my-rabbit.example.com:5672/%2F
+amqps://user:password@my-rabbit.example.com:5671
+```
+
+<Note>
+  The `amqps://` scheme enables TLS connections.
+</Note>
+
+## Connecting
+
+```rust
+use broccoli_queue::queue::BroccoliQueue;
+
+let queue = BroccoliQueue::builder("amqp://guest:guest@localhost:5672")
+    .pool_connections(5)
+    .build()
+    .await?;
+```
+
+## Message Scheduling
+
+Scheduling with RabbitMQ requires the `rabbitmq_delayed_message_exchange` community plugin. Without it, `delay` and `scheduled_at` in `PublishOptions` have no effect.
+
+### Installing the Plugin
+
+```bash
+# Enable in a running container
+docker exec some-rabbit rabbitmq-plugins enable rabbitmq_delayed_message_exchange
+```
+
+Or use a pre-built image that includes the plugin.
+
+### Enable Scheduling in Code
+
+```rust
+let queue = BroccoliQueue::builder("amqp://guest:guest@localhost:5672")
+    .enable_scheduling(true)
+    .build()
+    .await?;
+```
+
+For more information on the plugin, see the [RabbitMQ scheduling blog post](https://www.rabbitmq.com/blog/2015/04/16/scheduling-messages-with-rabbitmq).
+
+## Supported Features
+
+| Feature | Supported | Notes |
+|---|---|---|
+| Fairness queues | ✗ | Not supported with RabbitMQ backend |
+| Message scheduling | ✓ | Requires `rabbitmq_delayed_message_exchange` plugin |
+| Message priority (1–5) | ✓ | |
+| Message TTL | ✓ | |
+| Management API | ✓ | Requires `management` feature |
+
+<Warning>
+  Fairness queues (per-disambiguator routing) are not supported with the RabbitMQ backend. If you need fairness queue behavior, use the Redis backend instead.
+</Warning>
+
+## With the Management API
+
+```toml Cargo.toml
+broccoli_queue = { version = "0.4", default-features = false, features = ["rabbitmq", "management"] }
+```
+
+```rust
+#[cfg(feature = "management")]
+let status = queue.queue_status("jobs".to_string(), None).await?;
+```

@@ -1,0 +1,100 @@
+---
+title: "Understanding BroccoliQueue: The Core Queue Interface"
+sidebarTitle: "Queue"
+description: "BroccoliQueue is the primary interface for publishing and consuming messages in Broccoli. Learn how it wraps broker implementations behind a unified API."
+---
+
+`BroccoliQueue` is the main entry point into Broccoli. It wraps the underlying broker implementation — whether Redis, RabbitMQ, or SurrealDB — and exposes a single unified async API for all queue operations. You construct one queue instance per application, then clone it cheaply to share across tasks.
+
+## Building a Queue
+
+`BroccoliQueue` uses the builder pattern for configuration. Call `BroccoliQueue::builder(url)` with your broker URL, chain optional configuration methods, and call `.build().await` to establish the connection.
+
+```rust
+use broccoli_queue::queue::{BroccoliQueue, RetryStrategy};
+
+let queue = BroccoliQueue::builder("redis://localhost:6379")
+    .pool_connections(5)
+    .failed_message_retry_strategy(
+        RetryStrategy::new().with_attempts(3)
+    )
+    .enable_scheduling(true)
+    .build()
+    .await?;
+```
+
+The builder exposes these configuration methods:
+
+| Method | Type | Default | Description |
+|---|---|---|---|
+| `pool_connections(n)` | `u8` | `10` | Connection pool size |
+| `failed_message_retry_strategy(s)` | `RetryStrategy` | 3 attempts | Retry behavior for failed messages |
+| `enable_scheduling(b)` | `bool` | `false` | Enable delayed/scheduled message delivery |
+
+## Queue Lifecycle
+
+Every message in Broccoli passes through a well-defined lifecycle from publish to final resolution.
+
+<Steps>
+  <Step title="Connect">
+    The queue establishes a connection pool to the broker when `.build().await` is called. The pool is managed internally and connections are acquired per-operation.
+  </Step>
+  <Step title="Publish">
+    Call `queue.publish()` or `queue.publish_batch()`. The message is serialized and written to the main queue (a Redis sorted set, AMQP exchange, or SurrealDB table depending on backend).
+  </Step>
+  <Step title="Consume">
+    A consumer calls `queue.consume()` or `queue.process_messages()`. The message is atomically moved from the main queue to a processing queue while the handler runs.
+  </Step>
+  <Step title="Acknowledge or Reject">
+    When processing completes:
+    - `acknowledge()` — removes the message from the processing queue permanently
+    - `reject()` — re-queues for retry (up to the configured attempt limit), then moves to the failed queue
+    - `process_messages()` handles this automatically based on whether the handler returns `Ok` or `Err`
+  </Step>
+</Steps>
+
+## Cloning and Sharing
+
+`BroccoliQueue` implements `Clone` via an `Arc` pointer to the underlying broker. Cloning is inexpensive — all clones share the same connection pool.
+
+```rust
+use std::sync::Arc;
+
+let queue = BroccoliQueue::builder("redis://localhost:6379")
+    .build()
+    .await?;
+
+// Cheap clone — same connection pool
+let queue_for_worker = queue.clone();
+
+tokio::spawn(async move {
+    queue_for_worker
+        .process_messages("jobs", Some(2), None, |msg| async move {
+            println!("worker: {:?}", msg.payload);
+            Ok(())
+        })
+        .await
+        .unwrap();
+});
+```
+
+## Queue Size
+
+Use `queue.size(queue_name)` to retrieve message counts across all internal sub-queues. This method is available without the `management` feature.
+
+```rust
+let sizes = queue.size("jobs").await?;
+for (name, count) in &sizes {
+    println!("{}: {} messages", name, count);
+}
+// Example output:
+// jobs: 42 messages
+// jobs_processing: 3 messages
+// jobs_failed: 1 messages
+```
+
+The returned `HashMap<String, u64>` maps each internal queue name (main, processing, failed, and per-disambiguator fairness queues) to its current message count.
+
+<Note>
+  When the `management` feature is enabled, `BroccoliQueue` internally holds a `Box<dyn BrokerWithManagement>` instead of `Box<dyn Broker>`, which unlocks the `queue_status()` method. This is transparent to users — the public API remains identical.
+</Note>

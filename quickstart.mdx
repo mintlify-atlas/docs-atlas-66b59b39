@@ -1,47 +1,181 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with Broccoli Queue in 5 Minutes"
+sidebarTitle: "Quickstart"
+description: "Learn how to publish and consume your first message with Broccoli Queue in a Rust project using Redis as the broker backend."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+This quickstart walks you through adding Broccoli to a Rust project, connecting to Redis, publishing messages, and processing them with a concurrent worker loop — all in under five minutes.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+  <Step title="Start Redis">
+    Broccoli's default backend is Redis. Start a local instance with Docker:
 
     ```bash
-    npm install your-package
+    docker run -d -p 6379:6379 redis:7
+    ```
+
+    Or connect to an existing Redis instance — the default URL is `redis://localhost:6379`.
+  </Step>
+  <Step title="Add Broccoli to Cargo.toml">
+    Add the following to your `Cargo.toml`:
+
+    ```toml Cargo.toml
+    [dependencies]
+    broccoli_queue = "0.4"
+    tokio = { version = "1", features = ["full"] }
+    serde = { version = "1", features = ["derive"] }
     ```
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+  <Step title="Define a message payload">
+    Create a Rust struct for your message. It must derive `Clone`, `Serialize`, and `Deserialize`:
 
-    ```bash
-    your-cli init
+    ```rust
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct JobPayload {
+        id: String,
+        task_name: String,
+    }
     ```
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+  <Step title="Build a queue">
+    Connect to Redis using the builder pattern:
 
-    ```bash
-    your-cli start
+    ```rust
+    use broccoli_queue::queue::BroccoliQueue;
+
+    let queue = BroccoliQueue::builder("redis://localhost:6379")
+        .pool_connections(5)
+        .failed_message_retry_strategy(Default::default())
+        .build()
+        .await?;
+    ```
+  </Step>
+  <Step title="Publish a message">
+    Publish a single message to a named topic:
+
+    ```rust
+    let payload = JobPayload {
+        id: "job-1".to_string(),
+        task_name: "process_data".to_string(),
+    };
+
+    let published = queue.publish("jobs", None, &payload, None).await?;
+    println!("Published task_id: {}", published.task_id);
+    ```
+  </Step>
+  <Step title="Process messages">
+    Consume and handle messages with concurrent workers:
+
+    ```rust
+    use broccoli_queue::brokers::broker::BrokerMessage;
+
+    queue.process_messages(
+        "jobs",
+        Some(4), // 4 concurrent workers
+        None,
+        |msg: BrokerMessage<JobPayload>| async move {
+            println!("Processing: {} ({})", msg.payload.id, msg.payload.task_name);
+            Ok(())
+        },
+    ).await?;
     ```
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Complete Examples
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+These full examples are drawn directly from the Broccoli repository.
+
+<CodeGroup>
+
+```rust publisher.rs
+use broccoli_queue::{
+    error::BroccoliError,
+    queue::{BroccoliQueue, PublishOptions},
+};
+use serde::{Deserialize, Serialize};
+use time::Duration;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct JobPayload {
+    id: String,
+    task_name: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), BroccoliError> {
+    let queue = BroccoliQueue::builder("redis://localhost:6379")
+        .failed_message_retry_strategy(Default::default())
+        .pool_connections(5)
+        .build()
+        .await?;
+
+    // Publish a batch immediately
+    let jobs = vec![
+        JobPayload { id: "job-1".to_string(), task_name: "process_data".to_string() },
+        JobPayload { id: "job-2".to_string(), task_name: "generate_report".to_string() },
+    ];
+    let published = queue.publish_batch("jobs", None, jobs, None).await?;
+    println!("Published {} jobs", published.len());
+
+    // Publish with a 10-second delay
+    let delayed = JobPayload {
+        id: "job-3".to_string(),
+        task_name: "deferred_task".to_string(),
+    };
+    let options = PublishOptions {
+        delay: Some(Duration::seconds(10)),
+        ..Default::default()
+    };
+    queue.publish("jobs", None, &delayed, Some(options)).await?;
+
+    Ok(())
+}
+```
+
+```rust consumer.rs
+use broccoli_queue::{error::BroccoliError, queue::BroccoliQueue};
+use broccoli_queue::brokers::broker::BrokerMessage;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct JobPayload {
+    id: String,
+    task_name: String,
+}
+
+async fn process_job(job: &JobPayload) -> Result<(), BroccoliError> {
+    println!("Processing: {} ({})", job.id, job.task_name);
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let queue = BroccoliQueue::builder("redis://localhost:6379")
+        .pool_connections(5)
+        .failed_message_retry_strategy(Default::default())
+        .build()
+        .await?;
+
+    queue
+        .process_messages(
+            "jobs",
+            Some(4),
+            None,
+            |msg: BrokerMessage<JobPayload>| async move {
+                process_job(&msg.payload).await
+            },
+        )
+        .await?;
+
+    Ok(())
+}
+```
+
+</CodeGroup>
+
+<Tip>
+  For a deeper look at publishing options (priority, TTL, scheduling) see [Publishing Messages](/guides/publishing). For advanced consumer patterns including `process_messages_with_handlers` see [Consuming Messages](/guides/consuming).
 </Tip>

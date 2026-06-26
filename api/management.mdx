@@ -1,0 +1,129 @@
+---
+title: "Management API: QueueStatus and QueueType Reference"
+sidebarTitle: "Management API"
+description: "Reference for the Broccoli management API — enable the management Cargo feature to access QueueStatus introspection and the QueueType enumeration."
+---
+
+The management API provides queue introspection capabilities — pending message counts, in-flight processing counts, and failed message counts — all in a single structured response. It is enabled by the `management` Cargo feature and surfaces through the `BroccoliQueue::queue_status()` method.
+
+## Enabling the Feature
+
+```toml Cargo.toml
+[dependencies]
+broccoli_queue = { version = "0.4", features = ["redis", "management"] }
+```
+
+Import the types:
+
+```rust
+use broccoli_queue::brokers::management::{QueueStatus, QueueType};
+```
+
+## QueueStatus
+
+`QueueStatus` is the return type of `queue.queue_status()`. It provides a snapshot of queue health at a point in time.
+
+### Fields
+
+<ResponseField name="name" type="String">
+  The name of the queue as passed to `queue_status`.
+</ResponseField>
+
+<ResponseField name="queue_type" type="QueueType">
+  The logical type of this queue snapshot: `Main`, `Processing`, `Failed`, or `Fairness`.
+</ResponseField>
+
+<ResponseField name="size" type="usize">
+  Number of messages in the main queue waiting to be consumed.
+</ResponseField>
+
+<ResponseField name="processing" type="usize">
+  Number of messages currently in the processing queue (consumed but not yet acknowledged or rejected).
+</ResponseField>
+
+<ResponseField name="failed" type="usize">
+  Number of messages in the failed queue (exhausted their retry limit).
+</ResponseField>
+
+<ResponseField name="disambiguator_count" type="Option<usize>">
+  For fairness queues, the number of active disambiguator sub-queues. `None` for standard queues.
+</ResponseField>
+
+## QueueType
+
+`QueueType` identifies which logical partition a queue status refers to.
+
+| Variant | `Display` | Description |
+|---|---|---|
+| `Main` | `"main"` | The primary message queue |
+| `Processing` | `"processing"` | Messages currently being processed |
+| `Failed` | `"failed"` | Messages that exhausted their retry limit |
+| `Fairness` | `"fairness"` | A per-disambiguator fairness sub-queue |
+
+`QueueType` implements `Display`, `Debug`, `Clone`, `PartialEq`, and `Eq`.
+
+## `queue_status` Method
+
+```rust
+#[cfg(feature = "management")]
+pub async fn queue_status(
+    &self,
+    queue_name: String,
+    disambiguator: Option<String>,
+) -> Result<QueueStatus, BroccoliError>
+```
+
+### Standard Queue
+
+```rust
+#[cfg(feature = "management")]
+async fn check_queue(queue: &BroccoliQueue) -> Result<(), BroccoliError> {
+    let status = queue
+        .queue_status("jobs".to_string(), None)
+        .await?;
+
+    println!("Queue:      {}", status.name);
+    println!("Type:       {}", status.queue_type);
+    println!("Pending:    {}", status.size);
+    println!("Processing: {}", status.processing);
+    println!("Failed:     {}", status.failed);
+
+    Ok(())
+}
+```
+
+### Fairness Queue
+
+Pass a `disambiguator` to get the status of a specific tenant's sub-queue:
+
+```rust
+let status = queue
+    .queue_status("jobs".to_string(), Some("tenant-abc".to_string()))
+    .await?;
+
+println!("Tenant sub-queues: {:?}", status.disambiguator_count);
+```
+
+## Health Check Pattern
+
+```rust
+#[cfg(feature = "management")]
+async fn is_queue_healthy(
+    queue: &BroccoliQueue,
+    topic: &str,
+    max_failed: usize,
+) -> bool {
+    match queue.queue_status(topic.to_string(), None).await {
+        Ok(status) => status.failed <= max_failed,
+        Err(_) => false,
+    }
+}
+```
+
+<Warning>
+  The management API is **not** supported by the SurrealDB backend. Using the `management` feature together with a SurrealDB connection will result in compile errors or `BroccoliError::NotImplemented` at runtime. Use `features = ["redis", "management"]` or `features = ["rabbitmq", "management"]`.
+</Warning>
+
+<Note>
+  Internally, the `management` feature causes `BroccoliQueue` to hold a `Box<dyn BrokerWithManagement>` (a private supertrait combining `Broker + QueueManagement`) instead of `Box<dyn Broker>`. This is transparent to users — all existing methods on `BroccoliQueue` continue to work identically.
+</Note>

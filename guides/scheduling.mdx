@@ -1,0 +1,143 @@
+---
+title: "Scheduling and Delaying Messages in Broccoli"
+sidebarTitle: "Scheduling"
+description: "Delay message delivery or schedule messages for a specific future time using PublishOptions in Broccoli Queue across all supported backends."
+---
+
+Message scheduling lets you control when a published message becomes available for consumption. Broccoli supports two scheduling modes: a relative delay (e.g., deliver in 60 seconds) and an absolute scheduled time (e.g., deliver at 9 AM tomorrow). Both modes work across all three backends, though RabbitMQ requires an additional plugin.
+
+## Enable Scheduling
+
+Scheduling is opt-in. You must call `.enable_scheduling(true)` on the queue builder before using `delay` or `scheduled_at` in `PublishOptions`:
+
+```rust
+use broccoli_queue::queue::BroccoliQueue;
+
+let queue = BroccoliQueue::builder("redis://localhost:6379")
+    .enable_scheduling(true)
+    .build()
+    .await?;
+```
+
+<Warning>
+  Publishing a message with `delay` or `scheduled_at` set on a queue that does not have scheduling enabled will result in the message being delivered immediately (the options are silently ignored by some backends) or in a `BroccoliError`. Always enable scheduling on the queue builder when using time-based delivery.
+</Warning>
+
+## Delay a Message
+
+Use `PublishOptions::builder().delay()` to make a message available after a fixed duration:
+
+```rust
+use broccoli_queue::queue::PublishOptions;
+use time::Duration;
+
+let options = PublishOptions::builder()
+    .delay(Duration::seconds(60))
+    .build();
+
+queue.publish("jobs", None, &payload, Some(options)).await?;
+```
+
+The message will not be visible to consumers until 60 seconds after it is published.
+
+## Schedule at a Specific Time
+
+Use `.schedule_at()` to target a specific UTC timestamp:
+
+```rust
+use broccoli_queue::queue::PublishOptions;
+use time::{Duration, OffsetDateTime};
+
+// Schedule for exactly 24 hours from now
+let deliver_at = OffsetDateTime::now_utc() + Duration::hours(24);
+
+let options = PublishOptions::builder()
+    .schedule_at(deliver_at)
+    .build();
+
+queue.publish("reminders", None, &reminder_payload, Some(options)).await?;
+```
+
+## Message TTL
+
+`ttl` (time-to-live) is distinct from scheduling. TTL sets an expiry time: if the message is not consumed within the TTL window, it is discarded. TTL and scheduling can be combined.
+
+```rust
+let options = PublishOptions::builder()
+    .delay(Duration::minutes(5))     // available after 5 minutes
+    .ttl(Duration::hours(1))         // expires 1 hour after publish
+    .build();
+```
+
+<Note>
+  `delay` and `scheduled_at` should not both be set in the same `PublishOptions`. If both are provided, behavior is backend-dependent. Use one or the other.
+</Note>
+
+## RabbitMQ: Delayed Exchange Plugin
+
+When using the RabbitMQ backend with scheduling, the `rabbitmq_delayed_message_exchange` community plugin must be installed. Without it, the `delay` and `scheduled_at` options have no effect.
+
+Install the plugin in a running RabbitMQ container:
+
+```bash
+docker exec some-rabbit rabbitmq-plugins enable rabbitmq_delayed_message_exchange
+```
+
+Or use a pre-built image with the plugin:
+
+```bash
+docker run -d --hostname my-rabbit \
+  --name some-rabbit \
+  -p 5672:5672 \
+  heidiks/rabbitmq-delayed-message-exchange:latest
+```
+
+Then enable scheduling in your queue builder:
+
+```rust
+let queue = BroccoliQueue::builder("amqp://guest:guest@localhost:5672")
+    .enable_scheduling(true)
+    .build()
+    .await?;
+```
+
+See the official RabbitMQ scheduling blog post for more details: [Scheduling Messages with RabbitMQ](https://www.rabbitmq.com/blog/2015/04/16/scheduling-messages-with-rabbitmq).
+
+## Complete Scheduling Example
+
+```rust
+use broccoli_queue::queue::{BroccoliQueue, PublishOptions};
+use time::{Duration, OffsetDateTime};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ReminderPayload {
+    user_id: String,
+    message: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let queue = BroccoliQueue::builder("redis://localhost:6379")
+        .enable_scheduling(true)
+        .build()
+        .await?;
+
+    let payload = ReminderPayload {
+        user_id: "user-123".into(),
+        message: "Your trial expires today".into(),
+    };
+
+    // Schedule for tomorrow at this same time
+    let tomorrow = OffsetDateTime::now_utc() + Duration::days(1);
+    let options = PublishOptions::builder()
+        .schedule_at(tomorrow)
+        .ttl(Duration::days(2)) // discard if not processed within 2 days
+        .build();
+
+    let msg = queue.publish("reminders", None, &payload, Some(options)).await?;
+    println!("Scheduled reminder {} for {}", msg.task_id, tomorrow);
+
+    Ok(())
+}
+```

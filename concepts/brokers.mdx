@@ -1,0 +1,100 @@
+---
+title: "Broker Backends: Redis, RabbitMQ, and SurrealDB"
+sidebarTitle: "Brokers"
+description: "Broccoli supports three message broker backends — Redis (default), RabbitMQ, and SurrealDB — each enabled via Cargo feature flags and selected automatically by URL scheme."
+---
+
+Broccoli abstracts message broker interactions behind a `Broker` trait, so your application code never calls broker-specific APIs directly. Instead, you pass a URL to `BroccoliQueue::builder()`, and Broccoli selects and initializes the correct backend automatically based on the URL scheme. Switching backends requires only a URL change and a feature flag update — no application code changes.
+
+## Selecting a Backend
+
+The broker URL scheme determines which backend is used:
+
+<Tabs>
+  <Tab title="Redis">
+    URLs starting with `redis://` or `rediss://` use the `RedisBroker`:
+
+    ```rust
+    BroccoliQueue::builder("redis://localhost:6379")
+    ```
+
+    Requires the `redis` Cargo feature (default).
+  </Tab>
+  <Tab title="RabbitMQ">
+    URLs starting with `amqp://` or `amqps://` use the `RabbitMQBroker`:
+
+    ```rust
+    BroccoliQueue::builder("amqp://guest:guest@localhost:5672")
+    ```
+
+    Requires the `rabbitmq` Cargo feature.
+  </Tab>
+  <Tab title="SurrealDB">
+    URLs starting with `ws://`, `wss://`, or `mem://` use the `SurrealDBBroker`:
+
+    ```rust
+    // Remote
+    BroccoliQueue::builder("ws://localhost:8000")
+    // In-memory (for tests)
+    BroccoliQueue::builder("mem://")
+    ```
+
+    Requires the `surrealdb` Cargo feature.
+  </Tab>
+</Tabs>
+
+## Feature Flags Required
+
+Each backend is gated behind a Cargo feature flag. At least one must be enabled:
+
+```toml Cargo.toml
+# Redis (default — no explicit flag needed)
+broccoli_queue = "0.4"
+
+# RabbitMQ only
+broccoli_queue = { version = "0.4", default-features = false, features = ["rabbitmq"] }
+
+# SurrealDB only
+broccoli_queue = { version = "0.4", default-features = false, features = ["surrealdb"] }
+
+# Multiple backends enabled at once
+broccoli_queue = { version = "0.4", features = ["redis", "rabbitmq"] }
+```
+
+## Switching Backends
+
+Because all backends implement the same `Broker` trait, your application code using `BroccoliQueue` does not change when you switch brokers. Only two things change: the URL passed to the builder, and the feature flags in `Cargo.toml`.
+
+```rust
+// Redis
+let queue = BroccoliQueue::builder("redis://localhost:6379").build().await?;
+
+// RabbitMQ — identical application code
+let queue = BroccoliQueue::builder("amqp://localhost:5672").build().await?;
+
+// Both publish and process_messages work the same regardless of backend
+queue.publish("jobs", None, &payload, None).await?;
+queue.process_messages("jobs", Some(4), None, handler).await?;
+```
+
+## Backend Comparison
+
+<CardGroup cols={3}>
+  <Card title="Redis" icon="database" href="/brokers/redis">
+    The default backend. Production-ready with a bb8-redis connection pool, sorted set queues for priority ordering, and full support for fairness queues, scheduling, and the management API.
+  </Card>
+  <Card title="RabbitMQ" icon="envelope" href="/brokers/rabbitmq">
+    Uses the `lapin` async AMQP client with `deadpool-lapin` for pooling. Supports delayed message scheduling via the `rabbitmq_delayed_message_exchange` plugin. Fairness queues are not supported.
+  </Card>
+  <Card title="SurrealDB" icon="circle-nodes" href="/brokers/surrealdb">
+    Ideal for embedded deployments and testing. Supports both remote (`ws://`) and fully in-memory (`mem://`) modes. Does not support the management API.
+  </Card>
+</CardGroup>
+
+## The Broker Trait
+
+The `Broker` trait defines the contract every backend implements. Users never implement or call this directly — it is internal infrastructure used by `BroccoliQueue`. The trait includes: `connect`, `publish`, `try_consume`, `consume`, `acknowledge`, `reject`, `cancel`, and `size`.
+
+<Note>
+  If you need queue introspection beyond `size()`, enable the `management` Cargo feature. This unlocks `queue_status()` on `BroccoliQueue`, which returns a `QueueStatus` with pending, processing, and failed message counts. Note that the management API is only supported by Redis and RabbitMQ backends.
+</Note>
